@@ -17,14 +17,6 @@ const trainschema = new mongoose.Schema({
 				type:Number,
 				default:50
 			}
-		},
-		{
-			position:'middle',
-			seed:80
-		},
-				{
-			position:'rear',
-			seed:75
 		}
 	],
 	route:[{
@@ -34,42 +26,6 @@ const trainschema = new mongoose.Schema({
 			order:{
 				type:Number
 			},
-			downboards:[
-				{
-					position:{
-						type:String,
-						enum:['front','middle','rear']
-					},
-					count:{
-						type:Number,
-						default:0
-					}
-				}
-			],
-			totalsample_weight:[
-				{
-					position:{
-						type:String,
-						enum:['front','middle','rear']
-					},
-					count:{
-						type:Number,
-						default:0
-					}
-				}
-			]
-			,running_weight:[
-				{
-					position:{
-						type:String,
-						enum:['front','middle','rear']
-					},
-					count:{
-						type:Number,
-						default:0
-					}
-				}	
-			]
 		}],
 	coaches:[
 			{
@@ -81,14 +37,6 @@ const trainschema = new mongoose.Schema({
 					type:Number,
 					min:0,
 					max:100
-				},
-				totalsampleweight:{
-					type:Number,
-					default:0
-				},
-				lastupdated:{
-					type:Date,
-					default:Date.now
 				}
 			}
 		]

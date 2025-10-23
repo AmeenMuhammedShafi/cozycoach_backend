@@ -20,10 +20,6 @@ const votesschema = new mongoose.Schema({
 		type:String,
 		enum:['front','middle','rear']
 	},
-	confirmed:{
-		type:Boolean,
-		default:false
-	},
 	weight:{
 		type:Number,
 		default:0

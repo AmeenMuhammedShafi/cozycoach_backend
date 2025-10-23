@@ -16,12 +16,6 @@ const coachDataSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
-    seed: {
-        type: Number,
-        min: 0,
-        max: 100,
-        default: 50
-    },
     downboard:{
         type:Number,
         default:0
@@ -50,10 +44,6 @@ const aggregateCacheSchema = new mongoose.Schema({
             { position: 'middle' },
             { position: 'rear' }
         ]
-    },
-    lastupdated: {
-        type: Date,
-        default: Date.now
     }
 }, { timestamps: true });
 

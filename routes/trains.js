@@ -37,96 +37,96 @@ router.get('/search', async (req, res) => {
 	}
 });
 
-// --- TRAIN DETAILS & PREDICTION ---
-router.get('/train-details', async (req, res) => {
-	try {
-		const { trainId, from, to, deviceId } = req.query;
-		if (!trainId || !from || !to || !deviceId) 
-			return res.status(400).json({ msg: "trainId, from, to, and deviceId are required" });
+// // --- TRAIN DETAILS & PREDICTION ---
+// router.get('/train-details', async (req, res) => {
+// 	try {
+// 		const { trainId, from, to, deviceId } = req.query;
+// 		if (!trainId || !from || !to || !deviceId) 
+// 			return res.status(400).json({ msg: "trainId, from, to, and deviceId are required" });
 
-		const train = await trains.findById(trainId).populate('route.stationid');
-		if (!train) return res.status(404).json({ msg: "Train not found" });
+// 		const train = await trains.findById(trainId).populate('route.stationid');
+// 		if (!train) return res.status(404).json({ msg: "Train not found" });
 
-		const route = train.route;
-		const fromIndex = route.findIndex(r => r.stationid._id.toString() === from);
-		const toIndex = route.findIndex(r => r.stationid._id.toString() === to);
-		if (fromIndex === -1 || toIndex === -1 || fromIndex >= toIndex) 
-			return res.status(400).json({ msg: "Invalid from/to stations for this train" });
+// 		const route = train.route;
+// 		const fromIndex = route.findIndex(r => r.stationid._id.toString() === from);
+// 		const toIndex = route.findIndex(r => r.stationid._id.toString() === to);
+// 		if (fromIndex === -1 || toIndex === -1 || fromIndex >= toIndex) 
+// 			return res.status(400).json({ msg: "Invalid from/to stations for this train" });
 
-		// --- Load or create AggregateCache for 'from' station ---
-		let aggCache = await AggregateCache.findOne({ trainId, stationId: from });
-		if (!aggCache) {
-			aggCache = await AggregateCache.create({
-				trainId,
-				stationId: from,
-				coachdata: train.coaches.map(c => ({
-					position: c.position,
-					crowdlevel: c.crowdlevel,
-					totalsampleweight: 0,
-					downboard: 0,
-					running_totalweight: 0
-				}))
-			});
-		}
+// 		// --- Load or create AggregateCache for 'from' station ---
+// 		let aggCache = await AggregateCache.findOne({ trainId, stationId: from });
+// 		if (!aggCache) {
+// 			aggCache = await AggregateCache.create({
+// 				trainId,
+// 				stationId: from,
+// 				coachdata: train.coaches.map(c => ({
+// 					position: c.position,
+// 					crowdlevel: train.seedlevel.find(s => s.position === c.position)?.seed || 50,
+// 					totalsampleweight: 0,
+// 					downboard: 0,
+// 					running_totalweight: 0
+// 				}))
+// 			});
+// 		}
 
-		// --- Compute running_totalweight dynamically from previous station ---
-		for (const coach of aggCache.coachdata) {
-			let prevRunning = 0;
-			if (fromIndex > 0) {
-				const prevStationId = route[fromIndex - 1].stationid._id.toString();
-				const prevAgg = await AggregateCache.findOne({ trainId, stationId: prevStationId });
-				if (prevAgg) {
-					const prevCoach = prevAgg.coachdata.find(c => c.position === coach.position);
-					if (prevCoach) prevRunning = prevCoach.running_totalweight || 0;
-				}
-			}
-			coach.running_totalweight = prevRunning + (coach.totalsampleweight || 0) - (coach.downboard || 0);
+// 		// --- Compute running_totalweight dynamically from previous station ---
+// 		for (const coach of aggCache.coachdata) {
+// 			let prevRunning = 0;
+// 			if (fromIndex > 0) {
+// 				const prevStationId = route[fromIndex - 1].stationid._id.toString();
+// 				const prevAgg = await AggregateCache.findOne({ trainId, stationId: prevStationId });
+// 				if (prevAgg) {
+// 					const prevCoach = prevAgg.coachdata.find(c => c.position === coach.position);
+// 					if (prevCoach) prevRunning = prevCoach.running_totalweight || 0;
+// 				}
+// 			}
+// 			coach.running_totalweight = prevRunning + (coach.totalsampleweight || 0) - (coach.downboard || 0);
 
-			// Apply decay based on station order
-			const decayFactor = 1 - (fromIndex * 0.05); // adjust 0.05 for stronger/weaker decay
-			coach.crowdlevel = Math.max(0, (coach.crowdlevel * decayFactor) + coach.running_totalweight);
-		}
-		await aggCache.save();
+// 			// Apply decay based on station order
+// 			const decayFactor = 1 - (fromIndex * 0.05); // adjust 0.05 for stronger/weaker decay
+// 			coach.crowdlevel = Math.max(0, (coach.crowdlevel * decayFactor) + coach.running_totalweight);
+// 		}
+// 		await aggCache.save();
 
-		// --- Predict least crowded coach ---
-		let predictedCoach = aggCache.coachdata.reduce(
-			(minC, c) => (c.crowdlevel < minC.crowdlevel ? c : minC), 
-			aggCache.coachdata[0]
-		);
-		let predictedPosition = predictedCoach.position;
+// 		// --- Predict least crowded coach ---
+// 		let predictedCoach = aggCache.coachdata.reduce(
+// 			(minC, c) => (c.crowdlevel < minC.crowdlevel ? c : minC), 
+// 			aggCache.coachdata[0]
+// 		);
+// 		let predictedPosition = predictedCoach.position;
 
-		// --- Passive vote ---
-		await votes.create({ deviceId, trainId, from, to, position: predictedPosition, weight: 0.5 });
+// 		// --- Passive vote ---
+// 		await votes.create({ deviceId, trainId, from, to, position: predictedPosition, weight: 0.5 });
 
-		// --- Update totalsampleweight at 'from' and downboard at 'to' ---
-		await AggregateCache.updateOne(
-			{ trainId, stationId: from, "coachdata.position": predictedPosition },
-			{ $inc: { "coachdata.$.totalsampleweight": 0.5 } }
-		);
-		await AggregateCache.updateOne(
-			{ trainId, stationId: to, "coachdata.position": predictedPosition },
-			{ $inc: { "coachdata.$.downboard": 0.5 } }
-		);
+// 		// --- Update totalsampleweight at 'from' and downboard at 'to' ---
+// 		await AggregateCache.updateOne(
+// 			{ trainId, stationId: from, "coachdata.position": predictedPosition },
+// 			{ $inc: { "coachdata.$.totalsampleweight": 0.5 } }
+// 		);
+// 		await AggregateCache.updateOne(
+// 			{ trainId, stationId: to, "coachdata.position": predictedPosition },
+// 			{ $inc: { "coachdata.$.downboard": 0.5 } }
+// 		);
 
-		// --- Award 10 XP ---
-		const user = await users.findOne({ deviceId });
-		if (user) {
-			user.xp = (user.xp || 0) + 10;
-			await user.save();
-		}
+// 		// --- Award 10 XP ---
+// 		const user = await users.findOne({ deviceId });
+// 		if (user) {
+// 			user.xp = (user.xp || 0) + 10;
+// 			await user.save();
+// 		}
 
-		return res.status(200).json({
-			msg: "Crowdlevels updated, 10 XP awarded for viewing",
-			coaches: aggCache.coachdata.map(c => ({ position: c.position, crowdlevel: c.crowdlevel }))
-		});
+// 		return res.status(200).json({
+// 			msg: "Crowdlevels updated, 10 XP awarded for viewing",
+// 			coaches: aggCache.coachdata.map(c => ({ position: c.position, crowdlevel: c.crowdlevel }))
+// 		});
 
-	} catch (err) {
-		console.error(err);
-		return res.status(500).json({ msg: "Server error" });
-	}
-});
+// 	} catch (err) {
+// 		console.error(err);
+// 		return res.status(500).json({ msg: "Server error" });
+// 	}
+// });
 
-// // --- CONFIRM VOTE ---
+// // --- CONFIRM VOTE ---(discarded)
 
 // router.post('/vote/confirm', async (req, res) => {
 // 	try {
@@ -214,115 +214,140 @@ router.get('/train-details', async (req, res) => {
 // 	}
 // });
 
-// --- CONFIRM VOTE ---
-router.post('/vote/confirm', async (req, res) => {
-    try {
-        console.log("Vote confirmation request received:", req.body);
-        const { deviceId, trainId, from, to, chosenPosition } = req.body;
+// --- TRAIN DETAILS & PREDICTION (Demo Mode: static crowd) ---
+router.get('/train-details', async (req, res) => {
+	try {
+		const { trainId, from, to } = req.query;
+		if (!trainId || !from || !to)
+			return res.status(400).json({ msg: "trainId, from, to, and deviceId are required" });
 
-        if (!deviceId || !trainId || !from || !to || !chosenPosition) {
-            console.log("Missing fields in request body");
-            return res.status(400).json({ msg: "All fields are required" });
-        }
+		// --- For demo: static crowd data ---
+		const coaches = [
+			{ position: 'front', crowdlevel: 80 },
+			{ position: 'middle', crowdlevel: 90 },
+			{ position: 'rear', crowdlevel: 85 }
+		];
 
-        // --- 1. Fetch the train ---
-        const train = await trains.findById(trainId).populate('route.stationid');
-        if (!train) {
-            console.log("Train not found for id:", trainId);
-            return res.status(404).json({ msg: "Train not found" });
-        }
-
-        const route = train.route;
-        const fromIndex = route.findIndex(r => r.stationid._id.toString() === from);
-        if (fromIndex === -1) {
-            console.log("From station not found in train route:", from);
-            return res.status(400).json({ msg: "From station not on this train route" });
-        }
-
-        // --- 2. Check if there was a predicted vote ---
-        let predictedVote = await votes.findOne({ deviceId, trainId, from, to });
-        console.log("Existing predicted vote:", predictedVote);
-
-        if (predictedVote) {
-            if (predictedVote.position !== chosenPosition) {
-                console.log(`Changing vote from ${predictedVote.position} to ${chosenPosition}`);
-
-                // Subtract weight from old predicted coach
-                const updateOld = await AggregateCache.updateOne(
-                    { trainId, stationId: from, "coachdata.position": predictedVote.position },
-                    { $inc: { "coachdata.$.totalsampleweight": -predictedVote.weight } }
-                );
-                console.log("Old coach weight adjusted:", updateOld);
-
-                // Remove old predicted vote
-                const removeOld = await predictedVote.deleteOne();
-                console.log("Old predicted vote removed:", removeOld);
-
-                // Create new confirmed vote
-                predictedVote = await votes.create({ deviceId, trainId, from, to, position: chosenPosition, weight: 1 });
-                console.log("New confirmed vote created:", predictedVote);
-            } else {
-                console.log("Predicted position matches confirmed, normalizing weight to 1");
-                predictedVote.weight = 1;
-                await predictedVote.save();
-            }
-        } else {
-            console.log("No predicted vote, creating confirmed vote");
-            predictedVote = await votes.create({ deviceId, trainId, from, to, position: chosenPosition, weight: 1 });
-            console.log("Confirmed vote created:", predictedVote);
-        }
-
-        // --- 3. Normalize totalsampleweight at FROM station ---
-        const normalizeWeight = await AggregateCache.updateOne(
-            { trainId, stationId: from, "coachdata.position": chosenPosition },
-            { $set: { "coachdata.$.totalsampleweight": 1 } }
-        );
-        console.log("Totalsampleweight normalized:", normalizeWeight);
-
-        // --- 4. Increment downboard at TO station ---
-        const incrementDownboard = await AggregateCache.updateOne(
-            { trainId, stationId: to, "coachdata.position": chosenPosition },
-            { $inc: { "coachdata.$.downboard": 1 } }
-        );
-        console.log("Downboard incremented at TO station:", incrementDownboard);
-
-        // --- 5. Update running_totalweight & crowdlevel ---
-        const aggCache = await AggregateCache.findOne({ trainId, stationId: from });
-        console.log("AggregateCache at FROM station before update:", aggCache);
-
-        for (const coach of aggCache.coachdata) {
-            let prevRunning = 0;
-            if (fromIndex > 0) {
-                const prevStationId = route[fromIndex - 1].stationid._id.toString();
-                const prevAgg = await AggregateCache.findOne({ trainId, stationId: prevStationId });
-                if (prevAgg) {
-                    const prevCoach = prevAgg.coachdata.find(c => c.position === coach.position);
-                    if (prevCoach) prevRunning = prevCoach.running_totalweight || 0;
-                }
-            }
-            coach.running_totalweight = prevRunning + (coach.totalsampleweight || 0) - (coach.downboard || 0);
-            coach.crowdlevel = Math.max(0, coach.running_totalweight);
-        }
-        await aggCache.save();
-        console.log("AggregateCache updated with new running_totalweight and crowdlevel:", aggCache);
-
-        // --- 6. Award XP ---
-        const user = await users.findOne({ deviceId });
-        if (user) {
-            user.xp = (user.xp || 0) + 50;
-            await user.save();
-            console.log("XP awarded to user:", user);
-        } else {
-            console.log("User not found for deviceId:", deviceId);
-        }
-
-        return res.status(200).json({xp:user.xp});
-
-    } catch (err) {
-        console.error("Error in vote/confirm route:", err);
-        return res.status(500).json({ msg: "Server error", error: err.message });
-    }
+		return res.status(200).json({
+			msg: "Demo crowd levels",
+			coaches
+		});
+	} catch (err) {
+		console.error(err);
+		return res.status(500).json({ msg: "Server error" });
+	}
 });
+
+
+// // --- CONFIRM VOTE ---
+// router.post('/vote/confirm', async (req, res) => {
+//     try {
+//         console.log("Vote confirmation request received:", req.body);
+//         const { deviceId, trainId, from, to, chosenPosition } = req.body;
+
+//         if (!deviceId || !trainId || !from || !to || !chosenPosition) {
+//             console.log("Missing fields in request body");
+//             return res.status(400).json({ msg: "All fields are required" });
+//         }
+
+//         // --- 1. Fetch the train ---
+//         const train = await trains.findById(trainId).populate('route.stationid');
+//         if (!train) {
+//             console.log("Train not found for id:", trainId);
+//             return res.status(404).json({ msg: "Train not found" });
+//         }
+
+//         const route = train.route;
+//         const fromIndex = route.findIndex(r => r.stationid._id.toString() === from);
+//         if (fromIndex === -1) {
+//             console.log("From station not found in train route:", from);
+//             return res.status(400).json({ msg: "From station not on this train route" });
+//         }
+
+//         // --- 2. Check if there was a predicted vote ---
+//         let predictedVote = await votes.findOne({ deviceId, trainId, from, to });
+//         console.log("Existing predicted vote:", predictedVote);
+
+//         if (predictedVote) {
+//             if (predictedVote.position !== chosenPosition) {
+//                 console.log(`Changing vote from ${predictedVote.position} to ${chosenPosition}`);
+
+//                 // Subtract weight from old predicted coach
+//                 const updateOld = await AggregateCache.updateOne(
+//                     { trainId, stationId: from, "coachdata.position": predictedVote.position },
+//                     { $inc: { "coachdata.$.totalsampleweight": -predictedVote.weight } }
+//                 );
+//                 console.log("Old coach weight adjusted:", updateOld);
+
+//                 // Remove old predicted vote
+//                 const removeOld = await predictedVote.deleteOne();
+//                 console.log("Old predicted vote removed:", removeOld);
+
+//                 // Create new confirmed vote
+//                 predictedVote = await votes.create({ deviceId, trainId, from, to, position: chosenPosition, weight: 1 });
+//                 console.log("New confirmed vote created:", predictedVote);
+//             } else {
+//                 console.log("Predicted position matches confirmed, normalizing weight to 1");
+//                 predictedVote.weight = 1;
+//                 await predictedVote.save();
+//             }
+//         } else {
+//             console.log("No predicted vote, creating confirmed vote");
+//             predictedVote = await votes.create({ deviceId, trainId, from, to, position: chosenPosition, weight: 1 });
+//             console.log("Confirmed vote created:", predictedVote);
+//         }
+
+//         // --- 3. Normalize totalsampleweight at FROM station ---
+//         const normalizeWeight = await AggregateCache.updateOne(
+//             { trainId, stationId: from, "coachdata.position": chosenPosition },
+//             { $set: { "coachdata.$.totalsampleweight": 1 } }
+//         );
+//         console.log("Totalsampleweight normalized:", normalizeWeight);
+
+//         // --- 4. Increment downboard at TO station ---
+//         const incrementDownboard = await AggregateCache.updateOne(
+//             { trainId, stationId: to, "coachdata.position": chosenPosition },
+//             { $inc: { "coachdata.$.downboard": 1 } }
+//         );
+//         console.log("Downboard incremented at TO station:", incrementDownboard);
+
+//         // --- 5. Update running_totalweight & crowdlevel ---
+//         const aggCache = await AggregateCache.findOne({ trainId, stationId: from });
+//         console.log("AggregateCache at FROM station before update:", aggCache);
+
+//         for (const coach of aggCache.coachdata) {
+//             let prevRunning = 0;
+//             if (fromIndex > 0) {
+//                 const prevStationId = route[fromIndex - 1].stationid._id.toString();
+//                 const prevAgg = await AggregateCache.findOne({ trainId, stationId: prevStationId });
+//                 if (prevAgg) {
+//                     const prevCoach = prevAgg.coachdata.find(c => c.position === coach.position);
+//                     if (prevCoach) prevRunning = prevCoach.running_totalweight || 0;
+//                 }
+//             }
+//             coach.running_totalweight = prevRunning + (coach.totalsampleweight || 0) - (coach.downboard || 0);
+//             coach.crowdlevel = Math.max(0, coach.running_totalweight);
+//         }
+//         await aggCache.save();
+//         console.log("AggregateCache updated with new running_totalweight and crowdlevel:", aggCache);
+
+//         // --- 6. Award XP ---
+//         const user = await users.findOne({ deviceId });
+//         if (user) {
+//             user.xp = (user.xp || 0) + 50;
+//             await user.save();
+//             console.log("XP awarded to user:", user);
+//         } else {
+//             console.log("User not found for deviceId:", deviceId);
+//         }
+
+//         return res.status(200).json({xp:user.xp});
+
+//     } catch (err) {
+//         console.error("Error in vote/confirm route:", err);
+//         return res.status(500).json({ msg: "Server error", error: err.message });
+//     }
+// });
 
 
 export default router;

@@ -1,19 +1,25 @@
 // seedTrain.js
 import mongoose from 'mongoose';
-import trains from './models/trains.js';
+import Train from './models/trains.js';
+import Station from './models/stations.js';
 import ENV from './config/config.js';
-import stations from './models/stations.js';
 
 mongoose.connect(ENV.MONGO_URL)
   .then(async () => {
-    console.log('MongoDB connected for seeding train');
+    console.log('✅ MongoDB connected for seeding train');
 
-    const stns = await stations.find({}).sort({ stationid: 1 });
+    const stations = await Station.find({}).sort({ stationid: 1 });
 
-    const route = stns.map((s, idx) => ({
+    // Map stations to route format
+    const route = stations.map((s, idx) => ({
       stationid: s._id,
       order: idx + 1,
       downboards: [
+        { position: 'front', count: 0 },
+        { position: 'middle', count: 0 },
+        { position: 'rear', count: 0 }
+      ],
+      totalsample_weight: [
         { position: 'front', count: 0 },
         { position: 'middle', count: 0 },
         { position: 'rear', count: 0 }
@@ -30,16 +36,18 @@ mongoose.connect(ENV.MONGO_URL)
       ],
       route,
       coaches: [
-        { position: 'front', crowdlevel: 30 },
+        { position: 'front', crowdlevel: 50 },
         { position: 'middle', crowdlevel: 50 },
-        { position: 'rear', crowdlevel: 70 }
+        { position: 'rear', crowdlevel: 50 }
       ]
     };
 
-    await trains.deleteMany({}); // clear old
-    await trains.create(trainData);
+    await Train.deleteMany({}); // clear old trains
+    await Train.create(trainData);
 
-    console.log('Train seeded successfully');
+    console.log('✅ Train seeded successfully');
     mongoose.disconnect();
   })
-  .catch(err => console.error(err));
+  .catch(err => {
+    console.error('❌ Error seeding train:', err);
+  });
